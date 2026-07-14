@@ -8,7 +8,7 @@ import datetime
 import pytz
 
 # 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk ", layout="centered")
+st.set_page_config(page_title="PV Alex Balkonkraftwerk 90 Grad ", layout="centered")
 
 # --- PASSWORT ABFRAGE ---
 def check_password():
