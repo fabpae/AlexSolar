@@ -3,88 +3,132 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import numpy as np
-from pvlib import location, irradiance
+from pvlib import location, irradiance, atmosphere, temperature
 import datetime
 import pytz
 
-# --- MANUELLE KALIBRIERUNG (DEIN REGLER) ---
-# Wir setzen die Effizienz so, dass 1,7kWp bei Sonne ~5,1kWh liefern.
-# Wenn es immer noch nicht passt, drehe NUR an diesem einen Wert:
-REAL_WORLD_EFFICIENCY = 0.88 
+# 1. APP-KONFIGURATION
+st.set_page_config(page_title="PV Alex Balkonkraftwerk ", layout="centered")
 
-st.set_page_config(page_title="PV Alex", layout="centered")
-
+# --- PASSWORT ABFRAGE ---
 def check_password():
     if "password_correct" not in st.session_state:
-        st.markdown("<h3 style='text-align: center;'>☀️ DinoHaus Login</h3>", unsafe_allow_html=True)
-        pwd = st.text_input("Passwort:", type="password", key="final_pwd")
-        if pwd == st.secrets.get("password", "admin"):
-            st.session_state["password_correct"] = True
-            st.rerun()
+        st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk Login</h2>", unsafe_allow_html=True)
+        pwd = st.text_input("Passwort:", type="password", key="password_input")
+        if pwd:
+            if pwd == st.secrets.get("password", "admin"): # Fallback auf 'admin' falls secrets fehlen
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("😕 Passwort falsch.")
         return False
     return True
 
-if not check_password(): st.stop()
+if not check_password():
+    st.stop()
 
-# Deine Hardware-Konfiguration
+# --- PARAMETER ---
+ALBEDO = 0.2
+TURBIDITY_MONTHLY = [2.1, 2.2, 2.5, 2.9, 3.2, 3.4, 3.5, 3.3, 2.9, 2.6, 2.3, 2.1]
+
 configs = [
-    {"name": "Balkon (Bifazial)", "wp": 900, "tilt": 90, "azi": 185, "color": "#f1c40f", "max": 0.80},
-   # {"name": "Zaun S (Platte+Flex)", "wp": 640, "tilt": 90, "azi": 170, "color": "#e67e22", "max": 0.60},
-     #{"name": "Zaun O (Flex)", "wp": 200, "tilt": 90, "azi": 80, "color": "#d35400", "max": 0.20}
+    {"name": "Balkon", "lat": (49.482869333, "lon": 8.2741404808, "wp": 450, "num": 2, "tilt": 90, "azi": 185, "color": "#f1c40f", "shade": None},
+   # {"name": "Hausdach WEST", "lat": 49.651536, "lon": 8.629729, "wp": 435, "num": 17, "tilt": 34, "azi": 258, "color": "#e67e22", "shade": None},
+   # {"name": "Balkon", "lat": 49.651488, "lon": 8.629795, "wp": 435, "num": 2, "tilt": 90, "azi": 170, "color": "#d35400", 
+   #  "shade": {"azi_min": 150, "azi_max": 280, "elev_limit": 35}} 
 ]
 
 @st.cache_data(ttl=3600)
-def get_weather(lat, lon, date):
-    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-           f"&hourly=cloudcover,direct_radiation,diffuse_radiation&start_date={date}&end_date={date}&timezone=Europe%2FBerlin")
+def get_weather_dwd(lat, lon, start, end):
     try:
-        res = requests.get(url).json()
+        url = (f"https://api.open-meteo.com/v1/dwd-icon?latitude={lat}&longitude={lon}"
+               f"&hourly=cloudcover,temperature_2m,windspeed_10m&start_date={start}&end_date={end}&timezone=Europe%2FBerlin")
+        res = requests.get(url, timeout=15).json()
         return pd.DataFrame({
-            'cloud': res['hourly']['cloudcover'],
-            'direct': res['hourly']['direct_radiation'],
-            'diffuse': res['hourly']['diffuse_radiation']
+            'cloud': np.array(res['hourly']['cloudcover']),
+            'temp_air': np.array(res['hourly']['temperature_2m']),
+            'wind': np.array(res['hourly']['windspeed_10m']) / 3.6
         })
     except: return None
 
-DATE_SEL = st.date_input("Prognose-Tag", datetime.date.today())
-
-if DATE_SEL:
-    weather = get_weather(49.482869333, 8.2741404808, DATE_SEL)
+# --- UI & LOGIK ---
+START_DATE = st.date_input("Startdatum", datetime.date.today())
+if START_DATE:
     tz = pytz.timezone('Europe/Berlin')
-    times = pd.date_range(start=pd.Timestamp(DATE_SEL).tz_localize(tz), periods=24, freq='h')
+    times = pd.date_range(start=pd.Timestamp(START_DATE).tz_localize(tz), periods=72, freq='h')
+
+    weather = get_weather_dwd(configs[0]['lat'], configs[0]['lon'], START_DATE, START_DATE + datetime.timedelta(days=2))
     
-    site = location.Location(49.482869333, 8.2741404808, tz='Europe/Berlin')
-    solpos = site.get_solarposition(times)
-
-    results = {}
-    for mod in configs:
-        # Wir nutzen die Globalstrahlung der API als Basis
-        # und wenden einen aggressiven Korrekturfaktor an.
-        direct = weather['direct'].values
-        diffuse = weather['diffuse'].values
+    if weather is not None:
+        weather = weather.iloc[:len(times)]
+        site = location.Location(configs[0]['lat'], configs[0]['lon'], tz='Europe/Berlin', altitude=100)
+        solpos = site.get_solarposition(times)
+        dni_extra = irradiance.get_extra_radiation(times)
         
-        # Geometrische Berechnung
-        aoi = irradiance.aoi(mod['tilt'], mod['azi'], solpos['zenith'], solpos['azimuth'])
-        # Wir erzwingen eine Mindestaufnahme für die bifazialen Reflexionen
-        exposure = np.maximum(np.cos(np.radians(aoi)), 0.4) 
-        
-        # Berechnung der Leistung in kW
-        # Die Formel ist nun linear auf deine Erträge (bis 5.1 kWh) skaliert
-        power_kw = ((direct * exposure + diffuse) / 1000) * (mod['wp'] / 1000) * (REAL_WORLD_EFFICIENCY * 4.2)
-        
-        # Hardware-Deckelung
-        results[mod['name']] = np.minimum(power_kw, mod['max'])
+        rel_airmass = atmosphere.get_relative_airmass(solpos['zenith'])
+        am_abs = atmosphere.get_absolute_airmass(rel_airmass)
+        linke_turbidity = TURBIDITY_MONTHLY[START_DATE.month - 1]
 
-    df = pd.DataFrame(results, index=times)
-    df[solpos['elevation'] < 2] = 0 # Nachts aus
-    
-    total_yield = df.sum().sum()
+        ergebnisse = {}
+        for f in configs:
+            cs = site.get_clearsky(times, model='ineichen', linke_turbidity=linke_turbidity)
+            cloud_factor = weather['cloud'].values / 100
+            ghi_adj = cs['ghi'].values * (1 - 0.75 * (cloud_factor ** 3.4))
+            dni_adj = cs['dni'].values * (1 - cloud_factor**2)
+            dhi_adj = np.maximum(ghi_adj - (dni_adj * np.cos(np.radians(solpos['zenith'].values))), 
+                                 cs['dhi'].values * (0.3 + 0.7 * cloud_factor))
 
-    st.markdown(f"## 📊 Prognose: **{total_yield:.2f} kWh**")
-    
-    fig = go.Figure()
-    for mod in configs:
-        fig.add_trace(go.Scatter(x=df.index, y=df[mod['name']], name=mod['name'], stackgroup='one', fill='tonexty'))
+            if f['shade']:
+                s = f['shade']
+                mask = (solpos['azimuth'] > s['azi_min']) & (solpos['azimuth'] < s['azi_max']) & (solpos['elevation'] < s['elev_limit'])
+                dni_adj[mask] = 0
 
-    fig.update_layout(template="plotly_dark", yaxis=dict(title="kW", range=[0, 1.5]), margin=dict(l=0, r=0, t=10, b=0))
-    st.plotly_chart(fig, use_container_width=True)
+            poa = irradiance.get_total_irradiance(
+                f['tilt'], f['azi'], solpos['zenith'], solpos['azimuth'],
+                dni_adj, ghi_adj, dhi_adj, dni_extra=dni_extra, model='perez', albedo=ALBEDO
+            )
+
+            # Korrektur für math. Stabilität
+            t_cell = temperature.faiman(poa['poa_global'], weather['temp_air'].values, weather['wind'].values)
+            f_temp = 1 + -0.0035 * (t_cell.values - 25)
+            f_spectral = np.maximum(0.8, 1 - (am_abs.values / 150))
+            f_lowlight = np.where(poa['poa_global'].values < 50, 0.85, 1.0)
+
+            prod = (poa['poa_global'].values / 1000) * ((f['wp'] * f['num']) / 1000) * 0.85 * f_temp * f_spectral * f_lowlight
+            ergebnisse[f['name']] = np.nan_to_num(prod)
+
+        df_results = pd.DataFrame(ergebnisse, index=times)
+        tages_summen = df_results.sum(axis=1).groupby(df_results.index.date).sum()
+
+        # --- HEADER ANZEIGE ---
+        header_str = " | ".join([f"{d.strftime('%d.%m.')}: {s:.1f} kWh" for d, s in tages_summen.items()])
+        st.markdown(f"### ☀️ {header_str}")
+
+        # --- INTERAKTIVE PLOTLY GRAFIK ---
+        fig = go.Figure()
+        for f in configs:
+            fig.add_trace(go.Scatter(
+                x=df_results.index, y=df_results[f['name']],
+                name=f['name'], mode='lines', stackgroup='one',
+                line=dict(width=0.5, color=f['color']), fillcolor=f['color'],
+                hovertemplate='%{y:.2f} kW'
+            ))
+
+        # JETZT-Linie Fix: Zeitstempel explizit konvertieren
+        now = datetime.datetime.now(tz)
+        if df_results.index.min() <= now <= df_results.index.max():
+            fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dash", line_color="red")
+            # Beschriftung separat hinzufügen, um den Fehler in 'annotation_text' zu umgehen
+            fig.add_annotation(x=now, y=df_results.sum(axis=1).max(), text="JETZT", showarrow=False, font=dict(color="red"))
+
+        fig.update_layout(
+            template="plotly_dark", height=450, margin=dict(l=10, r=10, t=30, b=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+            hovermode="x unified", xaxis=dict(rangeslider=dict(visible=True), type="date")
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        ertrag_heute = tages_summen.get(START_DATE, 0.0)
+        st.success(f"Prognostizierter Ertrag für {START_DATE.strftime('%d.%m.')}: {ertrag_heute:.1f} kWh")
+    else:
+        st.error("Wetterdaten nicht verfügbar.")
