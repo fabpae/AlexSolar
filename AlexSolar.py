@@ -8,12 +8,12 @@ import datetime
 import pytz
 
 # 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk 90 Grad ", layout="centered")
+st.set_page_config(page_title="PV Alex Balkonkraftwerk 90° ", layout="centered")
 
 # --- PASSWORT ABFRAGE ---
 def check_password():
     if "password_correct" not in st.session_state:
-        st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk Login</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk 90°>", unsafe_allow_html=True)
         pwd = st.text_input("Passwort:", type="password", key="password_input")
         if pwd:
             if pwd == st.secrets.get("password", "admin"): # Fallback auf 'admin' falls secrets fehlen
