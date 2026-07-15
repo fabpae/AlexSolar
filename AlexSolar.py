@@ -3,129 +3,155 @@ import pandas as pd
 import plotly.graph_objects as go
 import requests
 import numpy as np
-from pvlib import location, irradiance, atmosphere, temperature
+from pvlib import location, irradiance
 import datetime
 import pytz
 
-# 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk 90° ", layout="centered")
+st.set_page_config(page_title="PV DinoHaus - Pure Modulleistung", layout="centered")
 
-# --- PASSWORT ABFRAGE ---
 def check_password():
     if "password_correct" not in st.session_state:
-        st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk 90°</h2>", unsafe_allow_html=True)
-        pwd = st.text_input("Passwort:", type="password", key="password_input")
-        if pwd:
-            if pwd == st.secrets.get("password", "admin"): # Fallback auf 'admin' falls secrets fehlen
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.error("😕 Passwort falsch.")
+        st.markdown("<h3 style='text-align: center;'>☀️ DinoHaus Login</h3>", unsafe_allow_html=True)
+        pwd = st.text_input("Passwort:", type="password", key="final_pwd")
+        if pwd == st.secrets.get("password", "admin"):
+            st.session_state["password_correct"] = True
+            st.rerun()
         return False
     return True
 
-if not check_password():
+if not check_password(): 
     st.stop()
 
-# --- PARAMETER ---
-ALBEDO = 0.2
-TURBIDITY_MONTHLY = [2.1, 2.2, 2.5, 2.9, 3.2, 3.4, 3.5, 3.3, 2.9, 2.6, 2.3, 2.1]
+# --- SEITENLEISTE: DYNAMISCHE KONFIGURATION ---
+st.sidebar.header("⚙️ Systemeinstellungen")
 
-configs = [
-    {"name": "Balkon", "lat": 49.482869333, "lon": 8.2741404808, "wp": 450, "num": 2, "tilt": 90, "azi": 185, "color": "#f1c40f", "shade": None}
+# 1. Globaler Effizienz-Regler (Kalibrierung)
+REAL_WORLD_EFFICIENCY = st.sidebar.slider(
+    "Globale Effizienz (Kalibrierung)", 
+    min_value=0.1, 
+    max_value=2.0, 
+    value=0.88, 
+    step=0.01,
+    help="Skaliert den Gesamtertrag linear. Default = 0.88"
+)
+
+# 2. Anzahl der PV-Modulgruppen festlegen
+num_configs = st.sidebar.number_input(
+    "Anzahl der PV-Modulgruppen", 
+    min_value=1, 
+    max_value=10, 
+    value=3, 
+    step=1
+)
+
+# Standardwerte für eine schnelle Vorausfüllung
+default_configs = [
+    {"name": "Terrasse (Bifazial)", "wp": 880, "tilt": 30, "azi": 220, "color": "#f1c40f"},
+    {"name": "Zaun S (Platte+Flex)", "wp": 640, "tilt": 90, "azi": 170, "color": "#e67e22"},
+    {"name": "Zaun O (Flex)", "wp": 200, "tilt": 90, "azi": 80, "color": "#d35400"}
 ]
 
+configs = []
+
+# 3. Schleife zur Generierung der Eingabefelder für jede Gruppe
+for i in range(int(num_configs)):
+    st.sidebar.markdown(f"---")
+    st.sidebar.subheader(f"Gruppe {i+1}")
+    
+    d_name = default_configs[i]["name"] if i < len(default_configs) else f"Anlage {i+1}"
+    d_wp = default_configs[i]["wp"] if i < len(default_configs) else 400
+    d_tilt = default_configs[i]["tilt"] if i < len(default_configs) else 35
+    d_azi = default_configs[i]["azi"] if i < len(default_configs) else 180
+    d_color = default_configs[i]["color"] if i < len(default_configs) else "#1f77b4"
+    
+    # Eingabemasken für den Nutzer
+    name = st.sidebar.text_input(f"Name ({i+1})", value=d_name, key=f"name_{i}")
+    wp = st.sidebar.number_input(f"Leistung in Wp ({i+1})", min_value=10, max_value=50000, value=d_wp, step=10, key=f"wp_{i}")
+    tilt = st.sidebar.slider(f"Neigungswinkel [0°=flach, 90°=steil] ({i+1})", min_value=0, max_value=90, value=d_tilt, step=1, key=f"tilt_{i}")
+    azi = st.sidebar.slider(f"Ausrichtung [0°=N, 90°=O, 180°=S, 270°=W] ({i+1})", min_value=0, max_value=360, value=d_azi, step=5, key=f"azi_{i}")
+    color = st.sidebar.color_picker(f"Farbe im Chart ({i+1})", value=d_color, key=f"color_{i}")
+    
+    configs.append({
+        "name": name,
+        "wp": wp,
+        "tilt": tilt,
+        "azi": azi,
+        "color": color
+    })
+
+# --- Wetterdaten abfragen ---
 @st.cache_data(ttl=3600)
-def get_weather_dwd(lat, lon, start, end):
+def get_weather(lat, lon, date):
+    url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
+           f"&hourly=cloudcover,direct_radiation,diffuse_radiation&start_date={date}&end_date={date}&timezone=Europe%2FBerlin")
     try:
-        url = (f"https://api.open-meteo.com/v1/dwd-icon?latitude={lat}&longitude={lon}"
-               f"&hourly=cloudcover,temperature_2m,windspeed_10m&start_date={start}&end_date={end}&timezone=Europe%2FBerlin")
-        res = requests.get(url, timeout=15).json()
+        res = requests.get(url).json()
         return pd.DataFrame({
-            'cloud': np.array(res['hourly']['cloudcover']),
-            'temp_air': np.array(res['hourly']['temperature_2m']),
-            'wind': np.array(res['hourly']['windspeed_10m']) / 3.6
+            'cloud': res['hourly']['cloudcover'],
+            'direct': res['hourly']['direct_radiation'],
+            'diffuse': res['hourly']['diffuse_radiation']
         })
-    except: return None
+    except: 
+        return None
 
-# --- UI & LOGIK ---
-START_DATE = st.date_input("Startdatum", datetime.date.today())
-if START_DATE:
-    tz = pytz.timezone('Europe/Berlin')
-    times = pd.date_range(start=pd.Timestamp(START_DATE).tz_localize(tz), periods=72, freq='h')
+# --- Hauptbereich der App ---
+DATE_SEL = st.date_input("Prognose-Tag", datetime.date.today())
 
-    weather = get_weather_dwd(configs[0]['lat'], configs[0]['lon'], START_DATE, START_DATE + datetime.timedelta(days=2))
+if DATE_SEL:
+    weather = get_weather(49.644, 8.354, DATE_SEL)
     
     if weather is not None:
-        weather = weather.iloc[:len(times)]
-        site = location.Location(configs[0]['lat'], configs[0]['lon'], tz='Europe/Berlin', altitude=100)
-        solpos = site.get_solarposition(times)
-        dni_extra = irradiance.get_extra_radiation(times)
+        tz = pytz.timezone('Europe/Berlin')
+        times = pd.date_range(start=pd.Timestamp(DATE_SEL).tz_localize(tz), periods=24, freq='h')
         
-        rel_airmass = atmosphere.get_relative_airmass(solpos['zenith'])
-        am_abs = atmosphere.get_absolute_airmass(rel_airmass)
-        linke_turbidity = TURBIDITY_MONTHLY[START_DATE.month - 1]
+        site = location.Location(49.644, 8.354, tz='Europe/Berlin')
+        solpos = site.get_solarposition(times)
 
-        ergebnisse = {}
-        for f in configs:
-            cs = site.get_clearsky(times, model='ineichen', linke_turbidity=linke_turbidity)
-            cloud_factor = weather['cloud'].values / 100
-            ghi_adj = cs['ghi'].values * (1 - 0.75 * (cloud_factor ** 3.4))
-            dni_adj = cs['dni'].values * (1 - cloud_factor**2)
-            dhi_adj = np.maximum(ghi_adj - (dni_adj * np.cos(np.radians(solpos['zenith'].values))), 
-                                 cs['dhi'].values * (0.3 + 0.7 * cloud_factor))
+        results = {}
+        for mod in configs:
+            direct = weather['direct'].values
+            diffuse = weather['diffuse'].values
+            
+            # Geometrische Berechnung mit pvlib
+            aoi = irradiance.aoi(mod['tilt'], mod['azi'], solpos['zenith'], solpos['azimuth'])
+            
+            # Mindestaufnahme für die Reflexionen / Albedo-Effekt
+            exposure = np.maximum(np.cos(np.radians(aoi)), 0.4) 
+            
+            # Berechnung der ungekürzten Modulleistung in kW (ohne Wechselrichter-Limit)
+            power_kw = ((direct * exposure + diffuse) / 1000) * (mod['wp'] / 1000) * (REAL_WORLD_EFFICIENCY * 4.2)
+            
+            results[mod['name']] = power_kw
 
-            if f['shade']:
-                s = f['shade']
-                mask = (solpos['azimuth'] > s['azi_min']) & (solpos['azimuth'] < s['azi_max']) & (solpos['elevation'] < s['elev_limit'])
-                dni_adj[mask] = 0
+        df = pd.DataFrame(results, index=times)
+        df[solpos['elevation'] < 2] = 0 # Nachts auf 0 setzen
+        
+        total_yield = df.sum().sum()
 
-            poa = irradiance.get_total_irradiance(
-                f['tilt'], f['azi'], solpos['zenith'], solpos['azimuth'],
-                dni_adj, ghi_adj, dhi_adj, dni_extra=dni_extra, model='perez', albedo=ALBEDO
-            )
-
-            # Korrektur für math. Stabilität
-            t_cell = temperature.faiman(poa['poa_global'], weather['temp_air'].values, weather['wind'].values)
-            f_temp = 1 + -0.0035 * (t_cell.values - 25)
-            f_spectral = np.maximum(0.8, 1 - (am_abs.values / 150))
-            f_lowlight = np.where(poa['poa_global'].values < 50, 0.85, 1.0)
-
-            prod = (poa['poa_global'].values / 1000) * ((f['wp'] * f['num']) / 1000) * 0.85 * f_temp * f_spectral * f_lowlight
-            ergebnisse[f['name']] = np.nan_to_num(prod)
-
-        df_results = pd.DataFrame(ergebnisse, index=times)
-        tages_summen = df_results.sum(axis=1).groupby(df_results.index.date).sum()
-
-        # --- HEADER ANZEIGE ---
-        header_str = " | ".join([f"{d.strftime('%d.%m.')}: {s:.1f} kWh" for d, s in tages_summen.items()])
-        st.markdown(f"### ☀️ {header_str}")
-
-        # --- INTERAKTIVE PLOTLY GRAFIK ---
+        st.markdown(f"## 📊 Reine Modul-Prognose (ungedeckelt): **{total_yield:.2f} kWh**")
+        
+        # Plotly Graph erstellen
         fig = go.Figure()
-        for f in configs:
+        for mod in configs:
             fig.add_trace(go.Scatter(
-                x=df_results.index, y=df_results[f['name']],
-                name=f['name'], mode='lines', stackgroup='one',
-                line=dict(width=0.5, color=f['color']), fillcolor=f['color'],
-                hovertemplate='%{y:.2f} kW'
+                x=df.index, 
+                y=df[mod['name']], 
+                name=mod['name'], 
+                stackgroup='one', 
+                fill='tonexty',
+                line=dict(color=mod['color'])
             ))
 
-        # JETZT-Linie Fix: Zeitstempel explizit konvertieren
-        now = datetime.datetime.now(tz)
-        if df_results.index.min() <= now <= df_results.index.max():
-            fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dash", line_color="red")
-            # Beschriftung separat hinzufügen, um den Fehler in 'annotation_text' zu umgehen
-            fig.add_annotation(x=now, y=df_results.sum(axis=1).max(), text="JETZT", showarrow=False, font=dict(color="red"))
+        # Dynamisches Skalieren des Y-Achsen-Maximums basierend auf der tatsächlichen Peak-Leistung im Datensatz
+        max_power_produced = df.sum(axis=1).max()
+        y_max = max(1.5, max_power_produced * 1.1)  # Bietet etwas Headroom nach oben
 
         fig.update_layout(
-            template="plotly_dark", height=450, margin=dict(l=10, r=10, t=30, b=10),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-            hovermode="x unified", xaxis=dict(rangeslider=dict(visible=True), type="date")
+            template="plotly_dark", 
+            yaxis=dict(title="kW", range=[0, y_max]), 
+            margin=dict(l=0, r=0, t=10, b=0),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         st.plotly_chart(fig, use_container_width=True)
-
-        ertrag_heute = tages_summen.get(START_DATE, 0.0)
-        st.success(f"Prognostizierter Ertrag für {START_DATE.strftime('%d.%m.')}: {ertrag_heute:.1f} kWh")
     else:
-        st.error("Wetterdaten nicht verfügbar.")
+        st.error("Wetterdaten konnten nicht geladen werden. Bitte versuche es später noch einmal.")
