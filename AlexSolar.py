@@ -8,7 +8,7 @@ import datetime
 import pytz
 
 # 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk - Flexibel", layout="centered")
+st.set_page_config(page_title="PV Alex Balkonkraftwerk - Dynamisch", layout="centered")
 
 # --- PASSWORT ABFRAGE ---
 def check_password():
@@ -42,7 +42,7 @@ num_configs = st.sidebar.number_input(
     step=1
 )
 
-# Standardwerte für eine schnelle Vorausfüllung (deine originalen 2 Gruppen)
+# Standardwerte für eine schnelle Vorausfüllung
 default_configs = [
     {"name": "Balkon", "wp": 475, "num": 2, "tilt": 30, "azi": 185, "color": "#f1c40f"},
     {"name": "Balkon Wand", "wp": 475, "num": 2, "tilt": 90, "azi": 185, "color": "#e67e22"}
@@ -50,7 +50,7 @@ default_configs = [
 
 configs = []
 
-# Standorteinstellungen (für die gesamte Berechnung einheitlich)
+# Fester Standort aus deinem Originalcode (Ludwigshafen/Mannheim Region)
 LAT = 49.482869333
 LON = 8.2741404808
 
@@ -66,11 +66,12 @@ for i in range(int(num_configs)):
     d_azi = default_configs[i]["azi"] if i < len(default_configs) else 180
     d_color = default_configs[i]["color"] if i < len(default_configs) else "#3498db"
     
+    # Hier stellst du Name, Leistung, Anzahl und Winkel ein:
     name = st.sidebar.text_input(f"Name ({i+1})", value=d_name, key=f"name_{i}")
-    wp = st.sidebar.number_input(f"Leistung pro Modul (Wp) ({i+1})", min_value=10, max_value=1000, value=d_wp, step=5, key=f"wp_{i}")
+    wp = st.sidebar.number_input(f"Modulleistung in Wp ({i+1})", min_value=10, max_value=1000, value=d_wp, step=5, key=f"wp_{i}")
     num = st.sidebar.number_input(f"Anzahl der Module ({i+1})", min_value=1, max_value=50, value=d_num, step=1, key=f"num_{i}")
-    tilt = st.sidebar.slider(f"Neigungswinkel [0°=flach, 90°=steil] ({i+1})", min_value=0, max_value=90, value=d_tilt, step=1, key=f"tilt_{i}")
-    azi = st.sidebar.slider(f"Ausrichtung [0°=N, 90°=O, 180°=S, 270°=W] ({i+1})", min_value=0, max_value=360, value=d_azi, step=5, key=f"azi_{i}")
+    tilt = st.sidebar.slider(f"Neigungswinkel (Tilt) [0°=flach, 90°=steil] ({i+1})", min_value=0, max_value=90, value=d_tilt, step=1, key=f"tilt_{i}")
+    azi = st.sidebar.slider(f"Ausrichtungswinkel (Azimut) [0°=N, 90°=O, 180°=S, 270°=W] ({i+1})", min_value=0, max_value=360, value=d_azi, step=5, key=f"azi_{i}")
     color = st.sidebar.color_picker(f"Farbe im Chart ({i+1})", value=d_color, key=f"color_{i}")
     
     configs.append({
@@ -82,7 +83,7 @@ for i in range(int(num_configs)):
         "tilt": tilt,
         "azi": azi,
         "color": color,
-        "shade": None # Schattenprofile können bei Bedarf erweitert werden
+        "shade": None
     })
 
 @st.cache_data(ttl=3600)
