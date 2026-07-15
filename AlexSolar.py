@@ -7,8 +7,12 @@ from pvlib import location, irradiance, atmosphere, temperature
 import datetime
 import pytz
 
-# 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk - Dynamisch", layout="centered")
+# 1. APP-KONFIGURATION (Seitenleiste startet auf Handys jetzt automatisch geöffnet!)
+st.set_page_config(
+    page_title="PV Alex Balkonkraftwerk - Dynamisch", 
+    layout="centered",
+    initial_sidebar_state="expanded"
+)
 
 # --- PASSWORT ABFRAGE ---
 if "password_correct" not in st.session_state:
@@ -22,11 +26,11 @@ if "password_correct" not in st.session_state:
             st.error("😕 Passwort falsch.")
     st.stop()
 
-# --- SYSTEM STATE INITIALISIERUNG (Damit die Regler-Werte stabil bleiben) ---
+# --- SYSTEM STATE INITIALISIERUNG ---
 if "num_configs" not in st.session_state:
     st.session_state["num_configs"] = 2
 
-# Standardwerte für eine schnelle Vorausfüllung
+# Standardwerte für eine schnelle Vorausfüllung beim ersten Start
 default_configs = [
     {"name": "Balkon", "wp": 475, "num": 2, "tilt": 30, "azi": 185, "color": "#f1c40f"},
     {"name": "Balkon Wand", "wp": 475, "num": 2, "tilt": 90, "azi": 185, "color": "#e67e22"}
@@ -52,12 +56,12 @@ LON = 8.2741404808
 ALBEDO = 0.2
 TURBIDITY_MONTHLY = [2.1, 2.2, 2.5, 2.9, 3.2, 3.4, 3.5, 3.3, 2.9, 2.6, 2.3, 2.1]
 
-# 2. Schleife zur Generierung der Eingabefelder
+# 2. Schleife zur Generierung der Eingabefelder (Wp, Anzahl, Winkel)
 for i in range(int(num_configs)):
     st.sidebar.markdown(f"---")
     st.sidebar.subheader(f"Gruppe {i+1}")
     
-    # Standardwerte holen (entweder aus dem Standard oder frisch)
+    # Standardwerte holen (entweder aus dem Standard oder frisch generiert)
     d_name = default_configs[i]["name"] if i < len(default_configs) else f"Modulgruppe {i+1}"
     d_wp = default_configs[i]["wp"] if i < len(default_configs) else 400
     d_num = default_configs[i]["num"] if i < len(default_configs) else 1
@@ -65,7 +69,7 @@ for i in range(int(num_configs)):
     d_azi = default_configs[i]["azi"] if i < len(default_configs) else 180
     d_color = default_configs[i]["color"] if i < len(default_configs) else "#3498db"
     
-    # Durch direkte Zuweisung an st.session_state bleiben die Eingaben stabil!
+    # Session State hält die Werte stabil, wenn Regler bewegt werden
     if f"name_{i}" not in st.session_state: st.session_state[f"name_{i}"] = d_name
     if f"wp_{i}" not in st.session_state: st.session_state[f"wp_{i}"] = d_wp
     if f"num_{i}" not in st.session_state: st.session_state[f"num_{i}"] = d_num
@@ -139,13 +143,13 @@ if START_DATE:
                 dni_adj, ghi_adj, dhi_adj, dni_extra=dni_extra, model='perez', albedo=ALBEDO
             )
 
-            # Physische Korrektur & Temperatureffekte
+            # Korrektur & Temperatureffekte
             t_cell = temperature.faiman(poa['poa_global'], weather['temp_air'].values, weather['wind'].values)
             f_temp = 1 + -0.0035 * (t_cell.values - 25)
             f_spectral = np.maximum(0.8, 1 - (am_abs.values / 150))
             f_lowlight = np.where(poa['poa_global'].values < 50, 0.85, 1.0)
 
-            # Ertragsberechnung
+            # Ungekürzte Modul-Ertragsberechnung (ohne Wechselrichter-Schnitt)
             prod = (poa['poa_global'].values / 1000) * ((f['wp'] * f['num']) / 1000) * 0.85 * f_temp * f_spectral * f_lowlight
             ergebnisse[f['name']] = np.nan_to_num(prod)
 
