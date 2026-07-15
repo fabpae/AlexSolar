@@ -8,24 +8,21 @@ import datetime
 import pytz
 
 # 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk - Dynamisch", layout="centered")
+st.set_page_config(page_title="PV Alex Balkonkraftwerk - Aktiv", layout="centered")
 
-# --- PASSWORT ABFRAGE ---
-def check_password():
-    if "password_correct" not in st.session_state:
-        st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk</h2>", unsafe_allow_html=True)
-        pwd = st.text_input("Passwort:", type="password", key="password_input")
-        if pwd:
-            if pwd == st.secrets.get("password", "admin"): # Fallback auf 'admin' falls secrets fehlen
-                st.session_state["password_correct"] = True
-                st.rerun()
-            else:
-                st.error("😕 Passwort falsch.")
-        return False
-    return True
+# --- PASSWORT ABFRAGE (SAUBER GELÖST) ---
+if "password_correct" not in st.session_state:
+    st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk</h2>", unsafe_allow_html=True)
+    pwd = st.text_input("Passwort eingeben, um die App freizuschalten:", type="password", key="password_input")
+    if pwd:
+        if pwd == st.secrets.get("password", "admin"): # Fallback auf 'admin'
+            st.session_state["password_correct"] = True
+            st.rerun()
+        else:
+            st.error("😕 Passwort falsch.")
+    st.stop()  # Stoppt hier, zeichnet aber noch keine leere Seitenleiste vorab!
 
-if not check_password():
-    st.stop()
+# --- AB HIER STARTET DIE EIGENTLICHE APP ERST NACH ERFOLGREICHEM LOGIN ---
 
 # --- PARAMETER & USEREINGABE (SEITENLEISTE) ---
 ALBEDO = 0.2
@@ -50,7 +47,7 @@ default_configs = [
 
 configs = []
 
-# Fester Standort aus deinem Originalcode (Ludwigshafen/Mannheim Region)
+# Fester Standort
 LAT = 49.482869333
 LON = 8.2741404808
 
@@ -66,7 +63,7 @@ for i in range(int(num_configs)):
     d_azi = default_configs[i]["azi"] if i < len(default_configs) else 180
     d_color = default_configs[i]["color"] if i < len(default_configs) else "#3498db"
     
-    # Hier stellst du Name, Leistung, Anzahl und Winkel ein:
+    # Nutzer-Eingaben
     name = st.sidebar.text_input(f"Name ({i+1})", value=d_name, key=f"name_{i}")
     wp = st.sidebar.number_input(f"Modulleistung in Wp ({i+1})", min_value=10, max_value=1000, value=d_wp, step=5, key=f"wp_{i}")
     num = st.sidebar.number_input(f"Anzahl der Module ({i+1})", min_value=1, max_value=50, value=d_num, step=1, key=f"num_{i}")
@@ -143,7 +140,7 @@ if START_DATE:
             f_spectral = np.maximum(0.8, 1 - (am_abs.values / 150))
             f_lowlight = np.where(poa['poa_global'].values < 50, 0.85, 1.0)
 
-            # Berechnung der ungekürzten Gesamtleistung pro Gruppe (Modulanzahl berücksichtigt)
+            # Berechnung
             prod = (poa['poa_global'].values / 1000) * ((f['wp'] * f['num']) / 1000) * 0.85 * f_temp * f_spectral * f_lowlight
             ergebnisse[f['name']] = np.nan_to_num(prod)
 
@@ -164,7 +161,7 @@ if START_DATE:
                 hovertemplate='%{y:.2f} kW'
             ))
 
-        # JETZT-Linie Fix: Zeitstempel explizit konvertieren
+        # JETZT-Linie
         now = datetime.datetime.now(tz)
         if df_results.index.min() <= now <= df_results.index.max():
             fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dash", line_color="red")
