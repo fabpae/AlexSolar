@@ -8,9 +8,9 @@ import datetime
 import pytz
 
 # 1. APP-KONFIGURATION
-st.set_page_config(page_title="PV Alex Balkonkraftwerk - Aktiv", layout="centered")
+st.set_page_config(page_title="PV Alex Balkonkraftwerk - Dynamisch", layout="centered")
 
-# --- PASSWORT ABFRAGE (SAUBER GELÖST) ---
+# --- PASSWORT ABFRAGE ---
 if "password_correct" not in st.session_state:
     st.markdown("<h2 style='text-align: center; color: #f1c40f;'>☀️ PV Alex Balkonkraftwerk</h2>", unsafe_allow_html=True)
     pwd = st.text_input("Passwort eingeben, um die App freizuschalten:", type="password", key="password_input")
@@ -20,24 +20,11 @@ if "password_correct" not in st.session_state:
             st.rerun()
         else:
             st.error("😕 Passwort falsch.")
-    st.stop()  # Stoppt hier, zeichnet aber noch keine leere Seitenleiste vorab!
+    st.stop()
 
-# --- AB HIER STARTET DIE EIGENTLICHE APP ERST NACH ERFOLGREICHEM LOGIN ---
-
-# --- PARAMETER & USEREINGABE (SEITENLEISTE) ---
-ALBEDO = 0.2
-TURBIDITY_MONTHLY = [2.1, 2.2, 2.5, 2.9, 3.2, 3.4, 3.5, 3.3, 2.9, 2.6, 2.3, 2.1]
-
-st.sidebar.header("⚙️ PV-Konfiguration")
-
-# 1. Anzahl der Modulgruppen bestimmen
-num_configs = st.sidebar.number_input(
-    "Anzahl der Modulgruppen", 
-    min_value=1, 
-    max_value=10, 
-    value=2, 
-    step=1
-)
+# --- SYSTEM STATE INITIALISIERUNG (Damit die Regler-Werte stabil bleiben) ---
+if "num_configs" not in st.session_state:
+    st.session_state["num_configs"] = 2
 
 # Standardwerte für eine schnelle Vorausfüllung
 default_configs = [
@@ -45,17 +32,32 @@ default_configs = [
     {"name": "Balkon Wand", "wp": 475, "num": 2, "tilt": 90, "azi": 185, "color": "#e67e22"}
 ]
 
-configs = []
+# --- SEITENLEISTE ---
+st.sidebar.header("⚙️ PV-Konfiguration")
 
-# Fester Standort
+# 1. Anzahl der Modulgruppen
+num_configs = st.sidebar.number_input(
+    "Anzahl der Modulgruppen", 
+    min_value=1, 
+    max_value=10, 
+    value=st.session_state["num_configs"], 
+    step=1,
+    key="num_configs_input"
+)
+st.session_state["num_configs"] = num_configs
+
+configs = []
 LAT = 49.482869333
 LON = 8.2741404808
+ALBEDO = 0.2
+TURBIDITY_MONTHLY = [2.1, 2.2, 2.5, 2.9, 3.2, 3.4, 3.5, 3.3, 2.9, 2.6, 2.3, 2.1]
 
-# 2. Schleife zur Generierung der Eingabefelder für jede Gruppe
+# 2. Schleife zur Generierung der Eingabefelder
 for i in range(int(num_configs)):
     st.sidebar.markdown(f"---")
     st.sidebar.subheader(f"Gruppe {i+1}")
     
+    # Standardwerte holen (entweder aus dem Standard oder frisch)
     d_name = default_configs[i]["name"] if i < len(default_configs) else f"Modulgruppe {i+1}"
     d_wp = default_configs[i]["wp"] if i < len(default_configs) else 400
     d_num = default_configs[i]["num"] if i < len(default_configs) else 1
@@ -63,13 +65,20 @@ for i in range(int(num_configs)):
     d_azi = default_configs[i]["azi"] if i < len(default_configs) else 180
     d_color = default_configs[i]["color"] if i < len(default_configs) else "#3498db"
     
-    # Nutzer-Eingaben
-    name = st.sidebar.text_input(f"Name ({i+1})", value=d_name, key=f"name_{i}")
-    wp = st.sidebar.number_input(f"Modulleistung in Wp ({i+1})", min_value=10, max_value=1000, value=d_wp, step=5, key=f"wp_{i}")
-    num = st.sidebar.number_input(f"Anzahl der Module ({i+1})", min_value=1, max_value=50, value=d_num, step=1, key=f"num_{i}")
-    tilt = st.sidebar.slider(f"Neigungswinkel (Tilt) [0°=flach, 90°=steil] ({i+1})", min_value=0, max_value=90, value=d_tilt, step=1, key=f"tilt_{i}")
-    azi = st.sidebar.slider(f"Ausrichtungswinkel (Azimut) [0°=N, 90°=O, 180°=S, 270°=W] ({i+1})", min_value=0, max_value=360, value=d_azi, step=5, key=f"azi_{i}")
-    color = st.sidebar.color_picker(f"Farbe im Chart ({i+1})", value=d_color, key=f"color_{i}")
+    # Durch direkte Zuweisung an st.session_state bleiben die Eingaben stabil!
+    if f"name_{i}" not in st.session_state: st.session_state[f"name_{i}"] = d_name
+    if f"wp_{i}" not in st.session_state: st.session_state[f"wp_{i}"] = d_wp
+    if f"num_{i}" not in st.session_state: st.session_state[f"num_{i}"] = d_num
+    if f"tilt_{i}" not in st.session_state: st.session_state[f"tilt_{i}"] = d_tilt
+    if f"azi_{i}" not in st.session_state: st.session_state[f"azi_{i}"] = d_azi
+    if f"color_{i}" not in st.session_state: st.session_state[f"color_{i}"] = d_color
+
+    name = st.sidebar.text_input(f"Name ({i+1})", key=f"name_{i}")
+    wp = st.sidebar.number_input(f"Modulleistung in Wp ({i+1})", min_value=10, max_value=1000, step=5, key=f"wp_{i}")
+    num = st.sidebar.number_input(f"Anzahl der Module ({i+1})", min_value=1, max_value=50, step=1, key=f"num_{i}")
+    tilt = st.sidebar.slider(f"Neigungswinkel (Tilt) ({i+1})", min_value=0, max_value=90, step=1, key=f"tilt_{i}")
+    azi = st.sidebar.slider(f"Ausrichtung (Azimut) [Süden=180°] ({i+1})", min_value=0, max_value=360, step=5, key=f"azi_{i}")
+    color = st.sidebar.color_picker(f"Farbe im Chart ({i+1})", key=f"color_{i}")
     
     configs.append({
         "name": name,
@@ -83,6 +92,7 @@ for i in range(int(num_configs)):
         "shade": None
     })
 
+# --- WETTERDATEN ABFRAGEN ---
 @st.cache_data(ttl=3600)
 def get_weather_dwd(lat, lon, start, end):
     try:
@@ -124,23 +134,18 @@ if START_DATE:
             dhi_adj = np.maximum(ghi_adj - (dni_adj * np.cos(np.radians(solpos['zenith'].values))), 
                                  cs['dhi'].values * (0.3 + 0.7 * cloud_factor))
 
-            if f['shade']:
-                s = f['shade']
-                mask = (solpos['azimuth'] > s['azi_min']) & (solpos['azimuth'] < s['azi_max']) & (solpos['elevation'] < s['elev_limit'])
-                dni_adj[mask] = 0
-
             poa = irradiance.get_total_irradiance(
                 f['tilt'], f['azi'], solpos['zenith'], solpos['azimuth'],
                 dni_adj, ghi_adj, dhi_adj, dni_extra=dni_extra, model='perez', albedo=ALBEDO
             )
 
-            # Korrektur für math. Stabilität
+            # Physische Korrektur & Temperatureffekte
             t_cell = temperature.faiman(poa['poa_global'], weather['temp_air'].values, weather['wind'].values)
             f_temp = 1 + -0.0035 * (t_cell.values - 25)
             f_spectral = np.maximum(0.8, 1 - (am_abs.values / 150))
             f_lowlight = np.where(poa['poa_global'].values < 50, 0.85, 1.0)
 
-            # Berechnung
+            # Ertragsberechnung
             prod = (poa['poa_global'].values / 1000) * ((f['wp'] * f['num']) / 1000) * 0.85 * f_temp * f_spectral * f_lowlight
             ergebnisse[f['name']] = np.nan_to_num(prod)
 
